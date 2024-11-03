@@ -1,0 +1,64 @@
+version: '1.0'
+services:
+  n8n1:
+    image: n8nio/n8n:latest
+    container_name: n8n1
+    ports:
+      - "${N8N_PORT}:${N8N_PORT}"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER_EMAIL}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_USER_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - minio1
+      - clickhouse
+
+  clickhouse:
+    user: '101:101'
+    container_name: clickhouse-odbc
+    hostname: clickhouse-odbc
+    build:
+      context: ${PWD}/docker_files/
+      dockerfile: clickhouse-odbc.Dockerfile
+    volumes:
+      - ./fs/volumes/clickhouse/etc/clickhouse-server/config.d/config.xml:/etc/clickhouse-server/config.d/config.xml
+      - ./fs/volumes/clickhouse/etc/clickhouse-server/users.d/users.xml:/etc/clickhouse-server/users.d/users.xml
+      - ./fs/volumes/clickhouse/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+      - ./fs/volumes/clickhouse/odbc/odbc.ini:/etc/odbc.ini
+      - ./fs/volumes/clickhouse/odbc/odbcinst.ini:/etc/odbcinst.ini
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_HTTP_PORT}:${CLICKHOUSE_HTTP_PORT}"
+      - "127.0.0.1:${CLICKHOUSE_TCP_PORT}:${CLICKHOUSE_TCP_PORT}"
+    depends_on:
+      - minio1
+      - createbuckets
+
+  minio1:
+    image: quay.io/minio/minio
+    container_name: minio1
+    hostname: minio
+    command: server --address 0.0.0.0:${MINIO_PORT} --console-address 0.0.0.0:${MINIO_CONSOLE_PORT} /data
+    ports:
+      - "127.0.0.1:${MINIO_PORT}:${MINIO_PORT}"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT}:${MINIO_CONSOLE_PORT}"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      - minio1
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:${MINIO_PORT} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      /usr/bin/mc admin info myminio;
+      /usr/bin/mc mb myminio/clickhouse;
+      /usr/bin/mc policy set public myminio/clickhouse;
+      exit 0;
+      "
+
+volumes:
+  n8n_data:
